@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Math Snake Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #2c3e50;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+        }
+        
+        #gameContainer {
+            text-align: center;
+        }
+        
+        #gameInfo {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 600px;
+            margin-bottom: 10px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        #equation {
+            color: #3498db;
+            font-size: 28px;
+        }
+        
+        #score {
+            color: #e74c3c;
+        }
+        
+        canvas {
+            border: 3px solid #34495e;
+            background-color: #ecf0f1;
+            border-radius: 10px;
+        }
+        
+        #instructions {
+            margin-top: 20px;
+            max-width: 600px;
+            text-align: center;
+            color: #bdc3c7;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="gameInfo">
+            <div id="equation">2 + 3 = ?</div>
+            <div id="score">Score: 0</div>
+        </div>
+        <canvas id="gameCanvas" width="600" height="400"></canvas>
+        <div id="instructions">
+            <p>Use arrow keys to move the snake. Eat eggs with numbers that solve the equation!</p>
+            <p>Wrong eggs will slow you down. Solve equations to earn points!</p>
+        </div>
+    </div>
+    
+    <div id="gameOver">
+        <h2>Game Over!</h2>
+        <p id="finalScore">Final Score: 0</p>
+        <button onclick="restartGame()">Play Again</button>
+    </div>
+
+    <script>
+        // Game variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gridSize = 20;
+        const tileCount = canvas.width / gridSize;
+
+        let snake = [
+            {x: 10, y: 10}
+        ];
+        let food = {};
+        let eggs = [];
+        let dx = 0;
+        let dy = 0;
+        let score = 0;
+        let currentEquation = {};
+        let gameRunning = true;
+        let baseSpeed = 150;
+        let currentSpeed = baseSpeed;
+        let wrongEggPenalty = false;
+
+        // Sound effects (using Web Audio API)
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(frequency, duration, type = 'sine') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = frequency;
+            oscillator.type = type;
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        // Generate random math equation
+        function generateEquation() {
+            const operations = ['+', '-', '*', '/'];
+            const operation = operations[Math.floor(Math.random() * operations.length)];
+            let num1, num2, answer;
+
+            switch(operation) {
+                case '+':
+                    num1 = Math.floor(Math.random() * 10) + 1;
+                    num2 = Math.floor(Math.random() * 10) + 1;
+                    answer = num1 + num2;
+                    break;
+                case '-':
+                    num1 = Math.floor(Math.random() * 15) + 5;
+                    num2 = Math.floor(Math.random() * num1) + 1;
+                    answer = num1 - num2;
+                    break;
+                case '*':
+                    num1 = Math.floor(Math.random() * 5) + 2;
+                    num2 = Math.floor(Math.random() * 5) + 2;
+                    answer = num1 * num2;
+                    break;
+                case '/':
+                    answer = Math.floor(Math.random() * 8) + 2;
+                    num2 = Math.floor(Math.random() * 4) + 2;
+                    num1 = answer * num2;
+                    break;
+            }
+
+            return {
+                equation: `${num1} ${operation} ${num2} = ?`,
+                answer: answer,
+                numbers: [num1, num2],
+                operation: operation
+            };
+        }
+
+        // Generate eggs with numbers
+        function generateEggs() {
+            eggs = [];
+            const correctAnswer = currentEquation.answer;
+            
+            // Add correct answer egg
+            eggs.push({
+                x: Math.floor(Math.random() * tileCount),
+                y: Math.floor(Math.random() * tileCount),
+                number: correctAnswer,
+                isCorrect: true
+            });
+
+            // Add wrong answer eggs
+            for(let i = 0; i < 4; i++) {
+                let wrongNumber;
+                do {
+                    wrongNumber = Math.floor(Math.random() * 20) + 1;
+                } while(wrongNumber === correctAnswer);
+
+                eggs.push({
+                    x: Math.floor(Math.random() * tileCount),
+                    y: Math.floor(Math.random() * tileCount),
+                    number: wrongNumber,
+                    isCorrect: false
+                });
+            }
+
+            // Ensure eggs don't spawn on snake
+            eggs.forEach(egg => {
+                while(snake.some(segment => segment.x === egg.x && segment.y === egg.y)) {
+                    egg.x = Math.floor(Math.random() * tileCount);
+                    egg.y = Math.floor(Math.random() * tileCount);
+                }
+            });
+        }
+
+        // Initialize game
+        function initGame() {
+            currentEquation = generateEquation();
+            generateEggs();
+            document.getElementById('equation').textContent = currentEquation.equation;
+            document.getElementById('score').textContent = `Score: ${score}`;
+        }
+
+        // Draw game elements
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = '#ecf0f1';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw snake
+            ctx.fillStyle = wrongEggPenalty ? '#e67e22' : '#27ae60';
+            snake.forEach(segment => {
+                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize - 2, gridSize - 2);
+            });
+
+            // Draw snake head differently
+            ctx.fillStyle = wrongEggPenalty ? '#d35400' : '#2ecc71';
+            ctx.fillRect(snake[0].x * gridSize, snake[0].y * gridSize, gridSize - 2, gridSize - 2);
+
+            // Draw eggs
+            eggs.forEach(egg => {
+                // Egg background
+                ctx.fillStyle = egg.isCorrect ? '#2ecc71' : '#e74c3c';
+                ctx.beginPath();
+                ctx.arc(
+                    egg.x * gridSize + gridSize/2, 
+                    egg.y * gridSize + gridSize/2, 
+                    gridSize/2 - 2, 
+                    0, 
+                    2 * Math.PI
+                );
+                ctx.fill();
+
+                // Egg number
+                ctx.fillStyle = 'white';
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    egg.number, 
+                    egg.x * gridSize + gridSize/2, 
+                    egg.y * gridSize + gridSize/2 + 5
+                );
+            });
+        }
+
+        // Move snake
+        function moveSnake() {
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+
+            // Check wall collision
+            if(head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+                gameOver();
+                return;
+            }
+
+            // Check self collision
+            if(snake.some(segment => segment.x === head.x && segment.y === head.y)) {
+                gameOver();
+                return;
+            }
+
+            snake.unshift(head);
+
+            // Check egg collision
+            const eatenEgg = eggs.find(egg => egg.x === head.x && egg.y === head.y);
+            if(eatenEgg) {
+                if(eatenEgg.isCorrect) {
+                    // Correct answer
+                    score++;
+                    playSound(523, 0.2); // C note for success
+                    currentEquation = generateEquation();
+                    generateEggs();
+                    document.getElementById('equation').textContent = currentEquation.equation;
+                    document.getElementById('score').textContent = `Score: ${score}`;
+                    
+                    // Increase difficulty
+                    if(score % 3 === 0) {
+                        baseSpeed = Math.max(80, baseSpeed - 10);
+                    }
+                    
+                    wrongEggPenalty = false;
+                    currentSpeed = baseSpeed;
+                } else {
+                    // Wrong answer
+                    playSound(200, 0.3, 'sawtooth'); // Lower, harsh sound for wrong answer
+                    eggs = eggs.filter(egg => egg !== eatenEgg);
+                    wrongEggPenalty = true;
+                    currentSpeed = baseSpeed + 50; // Slow down snake
+                    
+                    // Remove penalty after 2 seconds
+                    setTimeout(() => {
+                        wrongEggPenalty = false;
+                        currentSpeed = baseSpeed;
+                    }, 2000);
+                }
+                snake.push({}); // Grow snake
+            } else {
+                snake.pop();
+            }
+        }
+
+        // Game over
+        function gameOver() {
+            gameRunning = false;
+            playSound(150, 0.5, 'sawtooth'); // Game over sound
+            document.getElementById('finalScore').textContent = `Final Score: ${score}`;
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        // Restart game
+        function restartGame() {
+            snake = [{x: 10, y: 10}];
+            dx = 0;
+            dy = 0;
+            score = 0;
+            gameRunning = true;
+            baseSpeed = 150;
+            currentSpeed = baseSpeed;
+            wrongEggPenalty = false;
+            document.getElementById('gameOver').style.display = 'none';
+            initGame();
+        }
+
+        // Game loop
+        function gameLoop() {
+            if(gameRunning) {
+                moveSnake();
+                drawGame();
+            }
+            setTimeout(gameLoop, currentSpeed);
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if(!gameRunning) return;
+
+            switch(e.key) {
+                case 'ArrowUp':
+                    if(dy !== 1) { dx = 0; dy = -1; }
+                    break;
+                case 'ArrowDown':
+                    if(dy !== -1) { dx = 0; dy = 1; }
+                    break;
+                case 'ArrowLeft':
+                    if(dx !== 1) { dx = -1; dy = 0; }
+                    break;
+                case 'ArrowRight':
+                    if(dx !== -1) { dx = 1; dy = 0; }
+                    break;
+            }
+        });
+
+        // Start game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>
